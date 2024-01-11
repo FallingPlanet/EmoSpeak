@@ -1,14 +1,10 @@
 import torchaudio
 import torch
 from torch.utils.data import Dataset, DataLoader
+import feature_extractor 
 import os
 
-# Feature Extraction Function
-def extract_features(audio_path):
-    waveform, sample_rate = torchaudio.load(audio_path)
-    mfcc_transform = torchaudio.transforms.MFCC(sample_rate=sample_rate, n_mfcc=40)
-    mfcc = mfcc_transform(waveform)
-    return mfcc
+
 
 # Custom Dataset Class
 class SERDataset(Dataset):
@@ -20,9 +16,9 @@ class SERDataset(Dataset):
         return len(self.audio_paths)
 
     def __getitem__(self, idx):
-        mfcc = extract_features(self.audio_paths[idx])
+        transformation = feature_extractor.extract_mfccs(self.audio_paths[idx])
         label = self.labels[idx]
-        return mfcc, label
+        return transformation, label
 
 def extract_label_from_crema(filename, crema_mapping, unified_mapping):
     emotion_identifier = filename.split('_')[2]
@@ -85,6 +81,22 @@ def process_savee(directory, savee_mapping, unified_mapping):
                     data[full_path] = label
     return data
 
+def process_datasets_for_features(dataset, feature_extractor_function):
+    all_features = []
+    all_labels = []
+    for audio_path, label in dataset.items():
+        feature = feature_extractor_function(audio_path)
+        all_features.append(feature)
+        all_labels.append(label)
+    return all_features, all_labels
+
+def save_features_and_labels(features, labels, feature_type, save_path):
+    features_tensor = torch.stack(features)
+    labels_tensor = torch.tensor(labels)
+
+    torch.save(features_tensor, os.path.join(save_path, f'{feature_type}_features.pt'))
+    torch.save(labels_tensor, os.path.join(save_path, f'{feature_type}_labels.pt'))
+    
 unified_mapping = {
     "Neutral": 0,
     "Calm": 0,
@@ -138,19 +150,27 @@ savee_mapping = {
     "f": 5   # Fear
 }
 
-# Process each dataset
+
+def merge_datasets(*datasets):
+    merged_data = {}
+    for dataset in datasets:
+        merged_data.update(dataset)
+    return merged_data
+
+# Process and merge each dataset
 crema_data = process_crema(crema_directory_path, crema_mapping, unified_mapping)
 ravdess_data = process_ravdess(ravdess_directory_path, ravdess_mapping, unified_mapping)
 tess_data = process_tess(tess_directory_path, tess_mapping, unified_mapping)
 savee_data = process_savee(savee_directory_path, savee_mapping, unified_mapping)
 
-# Combine and filter the data
-all_data = {**crema_data, **ravdess_data, **tess_data, **savee_data}  # Merge dictionaries
+# Combine data from all datasets
+all_data = merge_datasets(crema_data, ravdess_data, tess_data, savee_data)
 
-# Separate paths and labels
-all_audio_paths = list(all_data.keys())
-all_labels = list(all_data.values())
+# Process for MFCCs and Spectrograms
+mfccs, labels = process_datasets_for_features(all_data, feature_extractor.extract_mfccs)
+spectrograms, _ = process_datasets_for_features(all_data, feature_extractor.extract_spectrogram)
 
-# Create dataset and dataloader
-ser_dataset = SERDataset(all_audio_paths, all_labels)
-ser_dataloader = DataLoader(ser_dataset, batch_size=32, shuffle=True)
+# Save the data to files
+save_directory = "/path/to/save/directory"
+save_features_and_labels(mfccs, labels, 'mfcc', save_directory)
+save_features_and_labels(spectrograms, labels, 'spectrogram', save_directory)
