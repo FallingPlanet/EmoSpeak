@@ -5,7 +5,6 @@ import feature_extractor
 import os
 
 
-
 # Custom Dataset Class
 class SERDataset(Dataset):
     def __init__(self, audio_paths, labels):
@@ -90,12 +89,32 @@ def process_datasets_for_features(dataset, feature_extractor_function):
         all_labels.append(label)
     return all_features, all_labels
 
+def pad_sequence(sequences, batch_first=False, padding_value=0.0):
+    # Get the maximum length in the time dimension
+    max_len = max([s.size(-1) for s in sequences])
+
+    # Pad all sequences to this length
+    padded_sequences = []
+    for s in sequences:
+        if s.size(-1) < max_len:
+            # Padding size for the last dimension
+            padding_size = (0, max_len - s.size(-1))
+            padded_s = torch.nn.functional.pad(s, padding_size, 'constant', padding_value)
+            padded_sequences.append(padded_s)
+        else:
+            padded_sequences.append(s)
+
+    return torch.stack(padded_sequences, dim=0 if batch_first else 1)
+
+# Usage in your save_features_and_labels function
 def save_features_and_labels(features, labels, feature_type, save_path):
-    features_tensor = torch.stack(features)
+    # Pad features before stacking
+    features_tensor = pad_sequence(features, batch_first=True)  # batch_first depends on your model's requirement
     labels_tensor = torch.tensor(labels)
 
     torch.save(features_tensor, os.path.join(save_path, f'{feature_type}_features.pt'))
     torch.save(labels_tensor, os.path.join(save_path, f'{feature_type}_labels.pt'))
+
     
 unified_mapping = {
     "Neutral": 0,
@@ -108,7 +127,7 @@ unified_mapping = {
     "Surprise": 6
     # ...
 }
-crema_directory_path = r"E:\speech_datasets\CREMA-D_dataset\CREMA-D-master\AudioWAV"
+crema_directory_path = r"E:\speech_datasets\CREMA-D_dataset\AudioWAV"
 crema_mapping = {
     "NEU": "Neutral",
     "HAP": "Happy",
@@ -171,6 +190,6 @@ mfccs, labels = process_datasets_for_features(all_data, feature_extractor.extrac
 spectrograms, _ = process_datasets_for_features(all_data, feature_extractor.extract_spectrogram)
 
 # Save the data to files
-save_directory = "/path/to/save/directory"
+save_directory = r"E:\speech_datasets\feature_extracted_dataset"
 save_features_and_labels(mfccs, labels, 'mfcc', save_directory)
 save_features_and_labels(spectrograms, labels, 'spectrogram', save_directory)

@@ -2,50 +2,41 @@ import torch
 import torch.nn as nn
 
 class CustomTransformerClassifier(nn.Module):
-    def __init__(self, input_dim, num_heads, num_layers, num_classes, dim_feedforward=2048, dropout=0.1):
+    def __init__(self, input_dim, num_classes, num_heads=8, num_layers=4, dim_feedforward=2048, dropout=0.1):
         super(CustomTransformerClassifier, self).__init__()
 
-       
+        self.conv1 = nn.Conv1d(in_channels=40, out_channels=256, kernel_size=1)
+        self.conv2 = nn.Conv1d(in_channels=256, out_channels=128, kernel_size=1)
+        self.conv3 = nn.Conv1d(in_channels=128, out_channels=768, kernel_size=1)
 
         # Transformer Encoder Layer
-        encoder_layer1 = nn.TransformerEncoderLayer(d_model=input_dim, nhead=num_heads, dim_feedforward=dim_feedforward, dropout=dropout)
-        self.transformer_encoder1 = nn.TransformerEncoder(encoder_layer1, num_layers=num_layers)
-        
-        encoder_layer2 = nn.TransformerEncoderLayer(d_model=input_dim, nhead=num_heads, dim_feedforward=dim_feedforward,dropout=dropout)
-        self.transformer_encoder2 = nn.TransformerEncoder(encoder_layer2,num_layers=num_layers)
-        
-        self.dense1 = nn.Linear(input_dim,256)
-        self.dense2 = nn.Linear(256,128)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=768, nhead=num_heads, dim_feedforward=dim_feedforward, dropout=dropout)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
         # Fully connected layer for classification
-        self.fc = nn.Linear(128, num_classes)
+        self.fc = nn.Linear(768, num_classes)
 
     def forward(self, x):
+        x = x.permute(0, 2, 1)  # Adjust shape for Conv1d: [batch, features, seq_len]
         
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.conv3(x)
 
-        # Passing the input through the Transformer layers
-        transformer_output1 = self.transformer_encoder1(x)
-        
-        transformer_output2 = self.transformer_encoder2(transformer_output1)
+        x = x.permute(0, 2, 1)  # Permute back to [batch, seq_len, features]
 
-        # We use the output of the last token for classification
-        output = transformer_output2[:, -1, :]
+        transformer_output = self.transformer_encoder(x)
 
-        # Passing the output through the fully connected layer
+        output = transformer_output[:, -1, :]
         output = self.fc(output)
 
         return output
 
-# Example parameters
-input_dim = 768  # Feature size
-num_heads = 8
-num_layers = 4
-num_classes = 10  # Number of emotion classes
 
-# Initialize the model
-model = CustomTransformerClassifier(input_dim, num_heads, num_layers, num_classes)
 
-# Calculate the number of trainable parameters
-num_trainable_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
-print(f"Number of trainable parameters in the model: {num_trainable_parameters}")
+
+
+
+
 
 

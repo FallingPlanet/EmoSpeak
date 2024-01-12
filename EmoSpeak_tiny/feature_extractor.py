@@ -11,7 +11,7 @@ def extract_mfccs(audio_path):
     mfcc = mfcc_transform(waveform)
     return mfcc
 
-def extract_spectrogram(audio_path, n_mels=128):
+def extract_spectrogram(audio_path, n_mels=48):
     waveform, sample_rate = torchaudio.load(audio_path)
     spectrogram_transform = torchaudio.transforms.MelSpectrogram(sample_rate=sample_rate, n_mels=n_mels)
     spectrogram = spectrogram_transform(waveform)
