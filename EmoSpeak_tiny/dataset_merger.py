@@ -2,8 +2,14 @@ import torchaudio
 import torch
 from torch.utils.data import Dataset, DataLoader
 import feature_extractor 
+from feature_extractor import apply_augmentations
+
 import os
 
+import soundfile as sf
+
+def save_waveform(waveform, sample_rate, file_path):
+    sf.write(file_path, waveform.t().numpy(), sample_rate)
 
 # Custom Dataset Class
 class SERDataset(Dataset):
@@ -24,7 +30,7 @@ def extract_label_from_crema(filename, crema_mapping, unified_mapping):
     emotion = crema_mapping.get(emotion_identifier)
     return unified_mapping.get(emotion, -1)  # Returns -1 if the emotion is not in unified mapping
 
-def process_crema(directory, crema_mapping, unified_mapping):
+def process_crema(directory, crema_mapping, unified_mapping, num_augmentations_per_file):
     data = {}
     for filename in os.listdir(directory):
         if filename.lower().endswith('.wav'):
@@ -32,6 +38,16 @@ def process_crema(directory, crema_mapping, unified_mapping):
             label = extract_label_from_crema(filename, crema_mapping, unified_mapping)
             if label != -1:
                 data[full_path] = label
+                waveform, sample_rate = torchaudio.load(full_path)
+                    
+                for i in range(num_augmentations_per_file):
+                    augmented_waveform = apply_augmentations(waveform, sample_rate)
+                    augmented_file_name = f"{os.path.splitext(filename)[0]}_augmented_{i}.wav"
+                    augmented_full_path = os.path.join(directory, augmented_file_name)
+                    save_waveform(augmented_waveform, sample_rate, augmented_full_path)
+                    data[augmented_full_path] = label
+
+                
     return data
 
 def extract_label_from_ravdess(filename, ravdess_mapping, unified_mapping):
@@ -43,7 +59,7 @@ def extract_label_from_ravdess(filename, ravdess_mapping, unified_mapping):
     else:
         return -1
 
-def process_ravdess(directory, ravdess_mapping, unified_mapping):
+def process_ravdess(directory, ravdess_mapping, unified_mapping, num_augmentations_per_file):
     data = {}
     for root, dirs, files in os.walk(directory):
         for filename in files:
@@ -52,9 +68,18 @@ def process_ravdess(directory, ravdess_mapping, unified_mapping):
                 label = extract_label_from_ravdess(filename, ravdess_mapping, unified_mapping)
                 if label != -1:
                     data[full_path] = label
+                    # Generate and add augmented samples
+                    waveform, sample_rate = torchaudio.load(full_path)
+                    
+                    for i in range(num_augmentations_per_file):
+                        augmented_waveform = apply_augmentations(waveform, sample_rate)
+                        augmented_file_name = f"{os.path.splitext(filename)[0]}_augmented_{i}.wav"
+                        augmented_full_path = os.path.join(directory, augmented_file_name)
+                        save_waveform(augmented_waveform, sample_rate, augmented_full_path)
+                        data[augmented_full_path] = label
     return data
 
-def process_tess(directory, tess_mapping, unified_mapping):
+def process_tess(directory, tess_mapping, unified_mapping, num_augmentations_per_file):
     data = {}
     for root, dirs, files in os.walk(directory):
         for filename in files:
@@ -65,9 +90,17 @@ def process_tess(directory, tess_mapping, unified_mapping):
                 label = unified_mapping.get(emotion, -1)
                 if label != -1:
                     data[full_path] = label
+                    # Generate and add augmented samples
+                    waveform, sample_rate = torchaudio.load(full_path)
+                    for i in range(num_augmentations_per_file):
+                        augmented_waveform = apply_augmentations(waveform, sample_rate)
+                        augmented_file_name = f"{os.path.splitext(filename)[0]}_augmented_{i}.wav"
+                        augmented_full_path = os.path.join(directory, augmented_file_name)
+                        save_waveform(augmented_waveform, sample_rate, augmented_full_path)
+                        data[augmented_full_path] = label
     return data
 
-def process_savee(directory, savee_mapping, unified_mapping):
+def process_savee(directory, savee_mapping, unified_mapping, num_augmentations_per_file):
     data = {}
     for root, dirs, files in os.walk(directory):
         for filename in files:
@@ -78,6 +111,14 @@ def process_savee(directory, savee_mapping, unified_mapping):
                 label = unified_mapping.get(emotion, -1)
                 if label != -1:
                     data[full_path] = label
+                    # Generate and add augmented samples
+                    waveform, sample_rate = torchaudio.load(full_path)
+                    for i in range(num_augmentations_per_file):
+                        augmented_waveform = apply_augmentations(waveform, sample_rate)
+                        augmented_file_name = f"{os.path.splitext(filename)[0]}_augmented_{i}.wav"
+                        augmented_full_path = os.path.join(directory, augmented_file_name)
+                        save_waveform(augmented_waveform, sample_rate, augmented_full_path)
+                        data[augmented_full_path] = label
     return data
 
 def process_datasets_for_features(dataset, feature_extractor_function):
@@ -176,11 +217,11 @@ def merge_datasets(*datasets):
         merged_data.update(dataset)
     return merged_data
 
-# Process and merge each dataset
-crema_data = process_crema(crema_directory_path, crema_mapping, unified_mapping)
-ravdess_data = process_ravdess(ravdess_directory_path, ravdess_mapping, unified_mapping)
-tess_data = process_tess(tess_directory_path, tess_mapping, unified_mapping)
-savee_data = process_savee(savee_directory_path, savee_mapping, unified_mapping)
+crema_data = process_crema(crema_directory_path, crema_mapping, unified_mapping, num_augmentations_per_file=3)
+ravdess_data = process_ravdess(ravdess_directory_path, ravdess_mapping, unified_mapping, num_augmentations_per_file=3)
+tess_data = process_tess(tess_directory_path, tess_mapping, unified_mapping, num_augmentations_per_file=3)
+savee_data = process_savee(savee_directory_path, savee_mapping, unified_mapping, num_augmentations_per_file=3)
+
 
 # Combine data from all datasets
 all_data = merge_datasets(crema_data, ravdess_data, tess_data, savee_data)
