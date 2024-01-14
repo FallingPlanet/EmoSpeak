@@ -21,6 +21,7 @@ class Classifier:
         self.recall = Recall(num_classes=num_labels, task="multiclass").to(device)
         self.f1 = F1Score(num_classes=num_labels, task="multiclass").to(device)
         self.mcc = MatthewsCorrCoef(num_classes=num_labels, task="multiclass").to(device)
+        self.top2_acc = Accuracy(top_k = 2, num_classes=num_labels, task="multiclass").to(device)
 
     def split_features(self, combined_feature):
         # Split the combined features into MFCC and spectrogram features
@@ -74,6 +75,7 @@ class Classifier:
                 self.recall(outputs, labels)
                 self.f1(outputs, labels)
                 self.mcc(outputs, labels)
+                self.top2_acc(outputs,labels)
 
                 iterator.set_postfix(loss=total_loss / (iterator.n + 1))
 
@@ -86,7 +88,8 @@ class Classifier:
                 "precision": self.precision.compute().item(),
                 "recall": self.recall.compute().item(),
                 "f1": self.f1.compute().item(),
-                "mcc": self.mcc.compute().item()
+                "mcc": self.mcc.compute().item(),
+                "top 2 accuracy": self.top2_acc.compute().item()
             }
 
             # Reset metrics
@@ -133,9 +136,9 @@ def create_datasets(dataset, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15):
 
 
 combined_dataset = CombinedAudioDataset(
-    mfcc_features_path="E:/speech_datasets/feature_extracted_dataset/mfcc_features.pt",
-    spectrogram_features_path="E:/speech_datasets/feature_extracted_dataset/spectrogram_features.pt",
-    labels_path="E:/speech_datasets/feature_extracted_dataset/mfcc_labels.pt"  # Assuming labels are the same for both
+    mfcc_features_path=r"E:\speech_datasets\feature_extracted_dataset\mfcc_features.pt",
+    spectrogram_features_path=r"E:\speech_datasets\feature_extracted_dataset\spectrogram_features.pt",
+    labels_path=r"E:\speech_datasets\feature_extracted_dataset\spectrogram_labels.pt"  # Assuming labels are the same for both
 )
 
 
@@ -156,13 +159,13 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 mfcc_dim = 250  # Set the correct MFCC dimension
 spectrogram_dim = 251  # Set the correct Spectrogram dimension
 
-model = SpeechTransformer.CustomTransformerClassifier(mfcc_dim=mfcc_dim, spectrogram_dim=spectrogram_dim, num_classes=6, num_heads=16, dim_feedforward=2048, num_layers=4, dropout=0.1, use_convolutions=True)
+model = SpeechTransformer.CustomTransformerClassifier(mfcc_dim=mfcc_dim, spectrogram_dim=spectrogram_dim, num_classes=6, num_heads=16, dim_feedforward=2048, num_layers=4, dropout=0.1)
 # Create the Classifier instance
 classifier = Classifier(model, device, num_labels=6, log_dir="logs", mfcc_dim=mfcc_dim, spectrogram_dim=spectrogram_dim)
-optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-8)
+optimizer = torch.optim.AdamW(model.parameters(), lr=1e-5, weight_decay=1e-8)
 
 # Training loop
-num_epochs = 25
+num_epochs = 13
 for epoch in range(num_epochs):
     classifier.train_step(train_loader, optimizer, epoch)
     classifier.val_test_step(val_loader, "Validation")
@@ -175,4 +178,4 @@ print(f"Precision: {test_results['precision']:.4f}")
 print(f"Recall: {test_results['recall']:.4f}")
 print(f"F1 Score: {test_results['f1']:.4f}")
 print(f"Matthews Correlation Coefficient: {test_results['mcc']:.4f}")
-
+print(f"Top 2 Accuracy: {test_results['top 2 accuracy']:.4f}")

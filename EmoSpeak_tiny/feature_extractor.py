@@ -8,34 +8,66 @@ import os
 import soundfile as sf
 
 
+
+
+
+
+def extract_mfccs(waveform, sample_rate, n_mfcc=40, win_length=400, hop_length=160, n_mels=128):
+    mfcc_transform = torchaudio.transforms.MFCC(sample_rate=sample_rate,
+                                                n_mfcc=n_mfcc,
+                                                melkwargs={'win_length': win_length, 
+                                                           'hop_length': hop_length, 
+                                                           'n_mels': n_mels})
+    mfcc = mfcc_transform(waveform)
+    return mfcc
+
+def extract_spectrogram(waveform, sample_rate, n_mels=128, win_length=400, hop_length=160):
+    spectrogram_transform = torchaudio.transforms.MelSpectrogram(sample_rate=sample_rate,
+                                                                 n_mels=n_mels,
+                                                                 win_length=win_length,
+                                                                 hop_length=hop_length)
+    spectrogram = spectrogram_transform(waveform)
+    return spectrogram
+
+
+
+def create_directory_if_not_exists(directory):
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
+def save_waveform(waveform, sample_rate, file_path):
+    create_directory_if_not_exists(os.path.dirname(file_path))
+    sf.write(file_path, waveform.t().numpy(), sample_rate)
+
 def apply_augmentations(waveform, sample_rate):
     # Add Background Noise
     noise = torch.randn(waveform.size())
-    noise_level = random.uniform(0.001, 0.1)  # Adjust the noise level
+    noise_level = random.uniform(0.001, 0.1)
     waveform_with_noise = waveform + noise_level * noise
 
     # Dynamic Range Compression (Volume Adjust)
-    volume_factor = random.uniform(0.5, 1.5)  # Adjust the volume factor
+    volume_factor = random.uniform(0.5, 1.5)
     vol_transform = torchaudio.transforms.Vol(volume_factor)
     waveform_volume_adjusted = vol_transform(waveform_with_noise)
 
     return waveform_volume_adjusted
 
-def save_augmented_sample(waveform, sample_rate, save_path):
-    sf.write(save_path, waveform.t().numpy(), sample_rate)
+# Function to process all audio files within a directory and save augmented samples
+def process_and_augment_directory(directory, save_directory, augmented_directory, num_augmentations_per_file=3):
+    for filename in os.listdir(directory):
+        if filename.lower().endswith('.wav'):
+            full_path = os.path.join(directory, filename)
+            waveform, sample_rate = torchaudio.load(full_path)
 
-def create_and_save_augmented_samples(audio_paths, save_directory, num_augmentations_per_file=3):
-    for path in audio_paths:
-        waveform, sample_rate = torchaudio.load(path)
-        base_filename = os.path.basename(path)
+            # Save original sample
+            original_save_path = os.path.join(save_directory, filename)
+            save_waveform(waveform, sample_rate, original_save_path)
 
-        # Save original sample
-        original_save_path = os.path.join(save_directory, base_filename)
-        save_augmented_sample(waveform, sample_rate, original_save_path)
+            # Generate and save augmented samples
+            for i in range(num_augmentations_per_file):
+                augmented_waveform = apply_augmentations(waveform, sample_rate)
+                augmented_filename = f"{os.path.splitext(filename)[0]}_augmented_{i}.wav"
 
-        # Generate and save augmented samples
-        for i in range(num_augmentations_per_file):
-            augmented_waveform = apply_augmentations(waveform, sample_rate)
-            augmented_filename = f"{os.path.splitext(base_filename)[0]}_augmented_{i}.wav"
-            augmented_save_path = os.path.join(save_directory, augmented_filename)
-            save_augmented_sample(augmented_waveform, sample_rate, augmented_save_path)
+
+
+
