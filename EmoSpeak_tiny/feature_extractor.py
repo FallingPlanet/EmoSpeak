@@ -12,22 +12,31 @@ import soundfile as sf
 
 
 
-def extract_mfccs(waveform, sample_rate, n_mfcc=40, win_length=400, hop_length=160, n_mels=128):
-    mfcc_transform = torchaudio.transforms.MFCC(sample_rate=sample_rate,
-                                                n_mfcc=n_mfcc,
-                                                melkwargs={'win_length': win_length, 
-                                                           'hop_length': hop_length, 
-                                                           'n_mels': n_mels})
+def extract_mfccs(waveform, sample_rate, n_mfcc=40, win_length=400, hop_length=160, n_mels=64, n_fft=800):
+    mfcc_transform = torchaudio.transforms.MFCC(
+        sample_rate=sample_rate,
+        n_mfcc=n_mfcc,
+        melkwargs={
+            'win_length': win_length, 
+            'hop_length': hop_length, 
+            'n_mels': n_mels,
+            'n_fft': n_fft
+        }
+    )
     mfcc = mfcc_transform(waveform)
     return mfcc
 
-def extract_spectrogram(waveform, sample_rate, n_mels=128, win_length=400, hop_length=160):
-    spectrogram_transform = torchaudio.transforms.MelSpectrogram(sample_rate=sample_rate,
-                                                                 n_mels=n_mels,
-                                                                 win_length=win_length,
-                                                                 hop_length=hop_length)
+def extract_spectrogram(waveform, sample_rate, n_mels=64, win_length=400, hop_length=160, n_fft=800):
+    spectrogram_transform = torchaudio.transforms.MelSpectrogram(
+        sample_rate=sample_rate,
+        n_mels=n_mels,
+        win_length=win_length,
+        hop_length=hop_length,
+        n_fft=n_fft
+    )
     spectrogram = spectrogram_transform(waveform)
     return spectrogram
+
 
 
 

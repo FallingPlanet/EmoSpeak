@@ -6,6 +6,7 @@ from tqdm import tqdm
 import model as SpeechTransformer
 from torchmetrics import Accuracy, Precision, Recall, F1Score, MatthewsCorrCoef
 from FallingPlanet.orbit.utils.Metrics import TinyEmoBoard
+import os
 
 class Classifier:
     def __init__(self, model, device, num_labels, log_dir, mfcc_dim, spectrogram_dim):
@@ -105,26 +106,42 @@ class Classifier:
 
 
 class CombinedAudioDataset(torch.utils.data.Dataset):
-    def __init__(self, mfcc_features_path, spectrogram_features_path, labels_path):
-        self.mfcc_features = torch.load(mfcc_features_path)
-        self.spectrogram_features = torch.load(spectrogram_features_path)
-        self.labels = torch.load(labels_path)
+    def __init__(self, mfcc_directory, spectrogram_directory, mfcc_augmented_directory=None, spectrogram_augmented_directory=None):
+        self.mfcc_files = self._get_files(mfcc_directory)
+        self.spectrogram_files = self._get_files(spectrogram_directory)
 
-        assert len(self.mfcc_features) == len(self.spectrogram_features) == len(self.labels), "Feature and label lengths do not match"
+        if mfcc_augmented_directory:
+            self.mfcc_files += self._get_files(mfcc_augmented_directory)
+        if spectrogram_augmented_directory:
+            self.spectrogram_files += self._get_files(spectrogram_augmented_directory)
+
+        assert len(self.mfcc_files) == len(self.spectrogram_files), "MFCC and Spectrogram file counts do not match"
+
+        self.mfcc_data = []
+        self.spectrogram_data = []
+        self.labels = []
+
+        for mfcc_file, spectrogram_file in zip(self.mfcc_files, self.spectrogram_files):
+            mfcc_features, mfcc_labels = torch.load(mfcc_file)
+            spectrogram_features, _ = torch.load(spectrogram_file)
+
+            self.mfcc_data.extend(mfcc_features)
+            self.spectrogram_data.extend(spectrogram_features)
+            self.labels.extend(mfcc_labels)
+
+    def _get_files(self, directory):
+        return [os.path.join(directory, f) for f in os.listdir(directory) if f.endswith('.pt')]
 
     def __len__(self):
-        return len(self.mfcc_features)
+        return len(self.labels)
 
     def __getitem__(self, idx):
-        mfcc_feature = self.mfcc_features[idx]
-        spectrogram_feature = self.spectrogram_features[idx]
-        label = self.labels[idx]
-
-        # Concatenate features along the feature dimension
-        combined_feature = torch.cat((mfcc_feature, spectrogram_feature), dim=1)
+        return self.mfcc_data[idx], self.spectrogram_data[idx], self.labels[idx]
 
 
-        return combined_feature, label
+
+
+
 
 def create_datasets(dataset, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15):
     total_size = len(dataset)
@@ -136,9 +153,10 @@ def create_datasets(dataset, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15):
 
 
 combined_dataset = CombinedAudioDataset(
-    mfcc_features_path=r"E:\speech_datasets\feature_extracted_dataset\mfcc_features.pt",
-    spectrogram_features_path=r"E:\speech_datasets\feature_extracted_dataset\spectrogram_features.pt",
-    labels_path=r"E:\speech_datasets\feature_extracted_dataset\spectrogram_labels.pt"  # Assuming labels are the same for both
+mfcc_directory = r"E:\speech_datasets\mfcc_feature_extracted_dataset",
+spectrogram_directory = r"E:\speech_datasets\spectrogram_feature_extracted_dataset",
+mfcc_augmented_directory = r"E:\speech_datasets\mfcc_feature_extracted_dataset_augmented", # Optional
+spectrogram_augmented_directory = r"E:\speech_datasets\spectrogram_feature_extracted_dataset_augmented" # Optional 
 )
 
 

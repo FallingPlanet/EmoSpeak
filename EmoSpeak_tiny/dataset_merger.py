@@ -1,178 +1,122 @@
+import os
 import torchaudio
 import torch
-from torch.utils.data import Dataset, DataLoader
-import feature_extractor 
-from feature_extractor import apply_augmentations, process_and_augment_directory, create_directory_if_not_exists
+from torch.utils.data import Dataset
+import feature_extractor
 
-import os
-
-import soundfile as sf
-
-def save_waveform(waveform, sample_rate, file_path):
-    # Ensure the directory exists
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
-    # Save the waveform
-    sf.write(file_path, waveform.t().numpy(), sample_rate)
-
-
-# Custom Dataset Class
 class SERDataset(Dataset):
-    def __init__(self, audio_paths, labels):
-        self.audio_paths = audio_paths
-        self.labels = labels
+    def __init__(self, directory, mapping, unified_mapping, feature_extraction_func_name='extract_mfccs', is_train=False, num_augmentations=0):
+        self.directory = directory
+        self.mapping = mapping
+        self.unified_mapping = unified_mapping
+        self.is_train = is_train
+        self.num_augmentations = num_augmentations
+        self.feature_extraction_function = getattr(feature_extractor, feature_extraction_func_name)
+        self.data = self.load_data()
 
+    def load_data(self):
+        data = []
+        for root, dirs, files in os.walk(self.directory):
+            for filename in files:
+                if filename.lower().endswith('.wav'):
+                    label = self.extract_label_from_filename(root, filename)
+                    if label != -1:
+                        full_path = os.path.join(root, filename)
+                        waveform, sample_rate = torchaudio.load(full_path)
+                        feature = self.feature_extraction_function(waveform, sample_rate)
+                        data.append((feature, label))
+                        if self.is_train:
+                            for _ in range(self.num_augmentations):
+                                augmented_waveform = feature_extractor.apply_augmentations(waveform, sample_rate)
+                                augmented_feature = self.feature_extraction_function(augmented_waveform, sample_rate)
+                                data.append((augmented_feature, label))
+        return data
+
+    def extract_label_from_filename(self, root, filename):
+        if 'CREMA-D' in root:
+            emotion_identifier = filename.split('_')[2]
+            return self.unified_mapping.get(self.mapping.get(emotion_identifier, None), -1)
+        elif 'Emo-DB' in root:
+            emotion_identifier = filename[5]
+            return self.unified_mapping.get(self.mapping.get(emotion_identifier, None), -1)
+        elif 'EMOVO' in root:
+            emotion_identifier = filename.split('-')[0]
+            return self.unified_mapping.get(self.mapping.get(emotion_identifier, None), -1)
+        elif 'Ravdess' in root:
+            emotion_identifier = filename.split('-')[2]
+            return self.unified_mapping.get(self.mapping.get(emotion_identifier, None), -1)
+        elif 'SAVEE' in root:
+            if filename.startswith('n'):
+                emotion_identifier = 'n'
+            else:
+                emotion_identifier = filename[0:2]
+            return self.unified_mapping.get(self.mapping.get(emotion_identifier, None), -1)
+        elif 'TESS' in root:
+            parts = filename.split('_')
+            if len(parts) >= 3:
+                emotion_identifier = parts[2].lower().split('.')[0]
+            return self.unified_mapping.get(self.mapping.get(emotion_identifier, None), -1)
+        return -1
+    
     def __len__(self):
-        return len(self.audio_paths)
+        return len(self.data)
 
     def __getitem__(self, idx):
-        transformation = feature_extractor.extract_mfccs(self.audio_paths[idx])
-        label = self.labels[idx]
-        return transformation, label
-
-# Dataset processing functions for CREMA, RAVDESS, TESS, SAVEE
-def process_dataset(directory, dataset_mapping, unified_mapping, save_directory, augmented_directory, num_augmentations_per_file, feature_extractor_function):
-    data = {}
-    for root, dirs, files in os.walk(directory):
-        for filename in files:
-            if filename.lower().endswith('.wav'):
-                full_path = os.path.join(root, filename)
-                label = extract_label_from_dataset(filename, dataset_mapping, unified_mapping)
-                if label != -1:
-                    # Process audio file with the given feature extraction function
-                    process_audio_file(full_path, filename, label, save_directory, augmented_directory, num_augmentations_per_file, data, feature_extractor_function)
-    return data
-
-def extract_label_from_crema(filename, crema_mapping, unified_mapping):
-    emotion_identifier = filename.split('_')[2]
-    emotion = crema_mapping.get(emotion_identifier)
-    return unified_mapping.get(emotion, -1)  # Returns -1 if the emotion is not in unified mapping
-
-def extract_label_from_ravdess(filename, ravdess_mapping, unified_mapping):
-    components = filename.split('-')
-    if len(components) >= 3:
-        emotion_code = components[2]
-        emotion = ravdess_mapping.get(emotion_code)
-        return unified_mapping.get(emotion, -1)
-    else:
-        return -1
-
-def extract_label_from_tess(filename, tess_mapping, unified_mapping):
-    emotion = filename.split('_')[2].lower()
-    emotion = tess_mapping.get(emotion)
-    return unified_mapping.get(emotion, -1)
-
-def extract_label_from_savee(filename, savee_mapping, unified_mapping):
-    emotion = filename[:2].lower() if filename[0] == 's' else filename[0].lower()
-    emotion = savee_mapping.get(emotion)
-    return unified_mapping.get(emotion, -1)
-
-def extract_label_from_emo_db(filename, emo_db_mapping, unified_mapping):
-    emotion_identifier = filename[2]
-    emotion = emo_db_mapping.get(emotion_identifier)
-    return unified_mapping.get(emotion, -1)
-
-def extract_label_from_emovo(filename, emovo_mapping, unified_mapping):
-    emotion_identifier = filename.split('_')[0].lower()
-    emotion = emovo_mapping.get(emotion_identifier)
-    return unified_mapping.get(emotion, -1)
-
-def extract_label_from_dataset(filename, dataset_mapping, unified_mapping):
-    if dataset_mapping == crema_mapping:
-        return extract_label_from_crema(filename, dataset_mapping, unified_mapping)
-    elif dataset_mapping == ravdess_mapping:
-        return extract_label_from_ravdess(filename, dataset_mapping, unified_mapping)
-    elif dataset_mapping == tess_mapping:
-        return extract_label_from_tess(filename, dataset_mapping, unified_mapping)
-    elif dataset_mapping == savee_mapping:
-        return extract_label_from_savee(filename, dataset_mapping, unified_mapping)
-    elif dataset_mapping == emo_db_mapping:
-        return extract_label_from_emo_db(filename, dataset_mapping, unified_mapping)
-    elif dataset_mapping == emovo_mapping:
-        return extract_label_from_emovo(filename, dataset_mapping, unified_mapping)
-    else:
-        return -1
-
-
-
-def process_audio_file(full_path, filename, label, save_directory, augmented_directory, num_augmentations_per_file, data, feature_extractor_function):
-    waveform, sample_rate = torchaudio.load(full_path)
-    # Process original sample
-    original_feature = feature_extractor_function(waveform, sample_rate)
+        return self.data[idx]
     
- 
-    save_features_and_labels([original_feature], [label], os.path.splitext(filename)[0], save_directory)
-    data[full_path] = label
+    def pad_sequence(sequences, batch_first=False, padding_value=0.0):
+        # Find the longest sequence
+        max_len = max([s.size(-1) for s in sequences])
 
-    # Process augmented samples
-    augment_audio(filename, waveform, sample_rate, label, augmented_directory, num_augmentations_per_file, data, feature_extractor_function)
+        # Pad all sequences to the max length
+        padded_sequences = []
+        for s in sequences:
+            if s.size(-1) < max_len:
+                # Amount to pad
+                padding_size = (0, 0, 0, max_len - s.size(-1))  # Padding the last dimension
+                padded_s = torch.nn.functional.pad(s, padding_size, 'constant', padding_value)
+                padded_sequences.append(padded_s)
+            else:
+                padded_sequences.append(s)
 
-def augment_audio(filename, waveform, sample_rate, label, augmented_directory, num_augmentations_per_file, data, feature_extractor_function):
-    for i in range(num_augmentations_per_file):
-        augmented_waveform = apply_augmentations(waveform, sample_rate)
-        augmented_feature = feature_extractor_function(augmented_waveform, sample_rate)  # Pass both waveform and sample_rate
-        augmented_filename = f"{os.path.splitext(filename)[0]}_augmented_{i}"
-        save_features_and_labels([augmented_feature], [label], augmented_filename, augmented_directory)
+        return torch.stack(padded_sequences, dim=0 if batch_first else 1)
+
+    def merge_and_save_datasets(datasets, save_path):
+        merged_features = []
+        merged_labels = []
+
+        # Find the maximum length in the dataset
+        max_len = max([feature.shape[-1] for dataset in datasets for feature, _ in dataset])
+
+        for dataset in datasets:
+            for feature, label in dataset:
+                # Ensure the feature tensor is in the correct shape [1, Freq, Time]
+                feature = feature.unsqueeze(0) if feature.dim() == 2 else feature
+
+                # Debug: Print dataset name and feature shape before padding
+                print(f"Dataset: {dataset.directory}, Before padding: {feature.shape}")
+
+                # Pad the feature tensor
+                if feature.size(-1) < max_len:
+                    padding_size = (0, max_len - feature.size(-1))  # Pad the last dimension
+                    feature = torch.nn.functional.pad(feature, padding_size, "constant", 0)
+
+                # Debug: Print feature shape after padding
+                print(f"After padding: {feature.shape}")
+
+                merged_features.append(feature)
+                merged_labels.append(label)
+
+        # Stack and save the tensors
+        merged_features_tensor = torch.stack(merged_features)
+        merged_labels_tensor = torch.tensor(merged_labels)
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        torch.save((merged_features_tensor, merged_labels_tensor), save_path)
 
 
-def process_datasets_for_features(dataset, feature_extractor_function):
-    all_features = []
-    all_labels = []
-    for audio_path, label in dataset.items():
-        feature = feature_extractor_function(audio_path)
-        all_features.append(feature)
-        all_labels.append(label)
-    return all_features, all_labels
+          
 
-def pad_sequence(sequences, batch_first=False, padding_value=0.0):
-    # Get the maximum length in the time dimension
-    max_len = max([s.size(-1) for s in sequences])
 
-    # Pad all sequences to this length
-    padded_sequences = []
-    for s in sequences:
-        if s.size(-1) < max_len:
-            # Padding size for the last dimension
-            padding_size = (0, max_len - s.size(-1))
-            padded_s = torch.nn.functional.pad(s, padding_size, 'constant', padding_value)
-            padded_sequences.append(padded_s)
-        else:
-            padded_sequences.append(s)
-
-    return torch.stack(padded_sequences, dim=0 if batch_first else 1)
-
-def process_and_save_dataset(directory, mapping, unified_mapping, feature_extractor_function, save_directory, augmented_directory, num_augmentations_per_file):
-    data = {}
-    for root, dirs, files in os.walk(directory):
-        for filename in files:
-            if filename.lower().endswith('.wav'):
-                full_path = os.path.join(root, filename)
-                label = mapping.get(filename, unified_mapping)
-                if label != -1:
-                    # Process and save original sample
-                    waveform, sample_rate = torchaudio.load(full_path)
-                    feature = feature_extractor_function(waveform)
-                    save_features_and_labels([feature], [label], os.path.splitext(filename)[0], save_directory)
-
-                    # Process and save augmented samples
-                    for i in range(num_augmentations_per_file):
-                        augmented_waveform = apply_augmentations(waveform, sample_rate)
-                        augmented_feature = feature_extractor_function(augmented_waveform)
-                        augmented_filename = f"{os.path.splitext(filename)[0]}_augmented_{i}"
-                        save_features_and_labels([augmented_feature], [label], augmented_filename, augmented_directory)
-                        data[os.path.join(augmented_directory, augmented_filename + '.pt')] = label
-
-    return data
-
-# Usage in your save_features_and_labels function
-def save_features_and_labels(features, labels, feature_type, save_path):
-    # Pad features before stacking
-    features_tensor = pad_sequence(features, batch_first=True)  # batch_first depends on your model's requirement
-    labels_tensor = torch.tensor(labels)
-
-    torch.save(features_tensor, os.path.join(save_path, f'{feature_type}_features.pt'))
-    torch.save(labels_tensor, os.path.join(save_path, f'{feature_type}_labels.pt'))
-
-    
 unified_mapping = {
     "Neutral": 0,
     "Calm": 0,
@@ -247,48 +191,376 @@ emovo_mapping = {
     "neu": "Neutral"
 }
 
+# CREMA-D
+crema_dataset_train = SERDataset(
+    directory=crema_directory_path, 
+    mapping=crema_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_mfccs', 
+    is_train=True, 
+    num_augmentations=4
+)
 
-def merge_datasets(*datasets):
-    merged_data = {}
+# RAVDESS
+ravdess_dataset_train = SERDataset(
+    directory=ravdess_directory_path, 
+    mapping=ravdess_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_mfccs', 
+    is_train=True, 
+    num_augmentations=4
+)
+
+# TESS
+tess_dataset_train = SERDataset(
+    directory=tess_directory_path, 
+    mapping=tess_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_mfccs', 
+    is_train=True, 
+    num_augmentations=4
+)
+
+# SAVEE
+savee_dataset_train = SERDataset(
+    directory=savee_directory_path, 
+    mapping=savee_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_mfccs', 
+    is_train=True, 
+    num_augmentations=4
+)
+
+# Emo-DB
+emo_db_dataset_train = SERDataset(
+    directory=emo_db_directory_path, 
+    mapping=emo_db_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_mfccs', 
+    is_train=True, 
+    num_augmentations=4
+)
+
+# EMOVO
+emovo_dataset_train = SERDataset(
+    directory=emovo_directory_path, 
+    mapping=emovo_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_mfccs', 
+    is_train=True, 
+    num_augmentations=4
+)
+
+
+# CREMA-D
+crema_dataset_val = SERDataset(
+    directory=crema_directory_path, 
+    mapping=crema_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_mfccs', 
+    is_train=False, 
+    num_augmentations=4
+)
+
+# RAVDESS
+ravdess_dataset_val = SERDataset(
+    directory=ravdess_directory_path, 
+    mapping=ravdess_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_mfccs', 
+    is_train=False, 
+    num_augmentations=4
+)
+
+# TESS
+tess_dataset_val = SERDataset(
+    directory=tess_directory_path, 
+    mapping=tess_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_mfccs', 
+    is_train=False, 
+    num_augmentations=4
+)
+
+# SAVEE
+savee_dataset_val = SERDataset(
+    directory=savee_directory_path, 
+    mapping=savee_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_mfccs', 
+    is_train=False, 
+    num_augmentations=4
+)
+
+# Emo-DB
+emo_db_dataset_val = SERDataset(
+    directory=emo_db_directory_path, 
+    mapping=emo_db_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_mfccs', 
+    is_train=False, 
+    num_augmentations=4
+)
+
+# EMOVO
+emovo_dataset_val = SERDataset(
+    directory=emovo_directory_path, 
+    mapping=emovo_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_mfccs', 
+    is_train=False, 
+    num_augmentations=4
+)
+
+
+
+# CREMA-D
+crema_dataset_test = SERDataset(
+    directory=crema_directory_path, 
+    mapping=crema_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_mfccs', 
+    is_train=False, 
+    num_augmentations=4
+)
+
+# RAVDESS
+ravdess_dataset_test = SERDataset(
+    directory=ravdess_directory_path, 
+    mapping=ravdess_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_mfccs', 
+    is_train=False, 
+    num_augmentations=4
+)
+
+# TESS
+tess_dataset_test = SERDataset(
+    directory=tess_directory_path, 
+    mapping=tess_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_mfccs', 
+    is_train=False, 
+    num_augmentations=4
+)
+
+# SAVEE
+savee_dataset_test = SERDataset(
+    directory=savee_directory_path, 
+    mapping=savee_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_mfccs', 
+    is_train=False, 
+    num_augmentations=4
+)
+
+# Emo-DB
+emo_db_dataset_test = SERDataset(
+    directory=emo_db_directory_path, 
+    mapping=emo_db_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_mfccs', 
+    is_train=False, 
+    num_augmentations=4
+)
+
+# EMOVO
+emovo_dataset_test = SERDataset(
+    directory=emovo_directory_path, 
+    mapping=emovo_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_mfccs', 
+    is_train=False, 
+    num_augmentations=4
+)
+
+# CREMA-D
+crema_dataset_train_spectrogram = SERDataset(
+    directory=crema_directory_path, 
+    mapping=crema_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_spectrogram', 
+    is_train=True, 
+    num_augmentations=4
+)
+
+# RAVDESS
+ravdess_dataset_train_spectrogram = SERDataset(
+    directory=ravdess_directory_path, 
+    mapping=ravdess_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_spectrogram', 
+    is_train=True, 
+    num_augmentations=4
+)
+
+# TESS
+tess_dataset_train_spectrogram = SERDataset(
+    directory=tess_directory_path, 
+    mapping=tess_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_spectrogram', 
+    is_train=True, 
+    num_augmentations=4
+)
+
+# SAVEE
+savee_dataset_train_spectrogram = SERDataset(
+    directory=savee_directory_path, 
+    mapping=savee_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_spectrogram', 
+    is_train=True, 
+    num_augmentations=4
+)
+
+# Emo-DB
+emo_db_dataset_train_spectrogram = SERDataset(
+    directory=emo_db_directory_path, 
+    mapping=emo_db_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_spectrogram', 
+    is_train=True, 
+    num_augmentations=4
+)
+
+# EMOVO
+emovo_dataset_train_spectrogram = SERDataset(
+    directory=emovo_directory_path, 
+    mapping=emovo_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_spectrogram', 
+    is_train=True, 
+    num_augmentations=4
+)
+
+crema_dataset_val_spectrogram = SERDataset(
+    directory=crema_directory_path, 
+    mapping=crema_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_spectrogram', 
+    is_train=False
+)
+
+ravdess_dataset_val_spectrogram = SERDataset(
+    directory=ravdess_directory_path, 
+    mapping=ravdess_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_spectrogram', 
+    is_train=False
+)
+
+tess_dataset_val_spectrogram = SERDataset(
+    directory=tess_directory_path, 
+    mapping=tess_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_spectrogram', 
+    is_train=False
+)
+
+savee_dataset_val_spectrogram = SERDataset(
+    directory=savee_directory_path, 
+    mapping=savee_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_spectrogram', 
+    is_train=False
+)
+
+emo_db_dataset_val_spectrogram = SERDataset(
+    directory=emo_db_directory_path, 
+    mapping=emo_db_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_spectrogram', 
+    is_train=False
+)
+
+emovo_dataset_val_spectrogram = SERDataset(
+    directory=emovo_directory_path, 
+    mapping=emovo_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_spectrogram', 
+    is_train=False
+)
+
+crema_dataset_test_spectrogram = SERDataset(
+    directory=crema_directory_path, 
+    mapping=crema_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_spectrogram', 
+    is_train=False
+)
+
+ravdess_dataset_test_spectrogram = SERDataset(
+    directory=ravdess_directory_path, 
+    mapping=ravdess_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_spectrogram', 
+    is_train=False
+)
+
+tess_dataset_test_spectrogram = SERDataset(
+    directory=tess_directory_path, 
+    mapping=tess_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_spectrogram', 
+    is_train=False
+)
+
+savee_dataset_test_spectrogram = SERDataset(
+    directory=savee_directory_path, 
+    mapping=savee_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_spectrogram', 
+    is_train=False
+)
+
+emo_db_dataset_test_spectrogram = SERDataset(
+    directory=emo_db_directory_path, 
+    mapping=emo_db_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_spectrogram', 
+    is_train=False
+)
+
+emovo_dataset_test_spectrogram = SERDataset(
+    directory=emovo_directory_path, 
+    mapping=emovo_mapping, 
+    unified_mapping=unified_mapping, 
+    feature_extraction_func_name='extract_spectrogram', 
+    is_train=False
+)
+
+
+def merge_and_save_datasets(datasets, save_path):
+    merged_features = []
+    merged_labels = []
+
     for dataset in datasets:
-        merged_data.update(dataset)
-    return merged_data
+        for data in dataset:
+            feature, label = data
+            merged_features.append(feature)
+            merged_labels.append(label)
 
-# Define separate directories for saving MFCCs and Spectrograms
-save_directory_mfcc = r"E:\speech_datasets\mfcc_feature_extracted_dataset"
-augment_save_directory_mfcc = r"E:\speech_datasets\mfcc_feature_extracted_dataset_augmented"
-save_directory_spectrogram = r"E:\speech_datasets\spectrogram_feature_extracted_dataset"
-augment_save_directory_spectrogram = r"E:\speech_datasets\spectrogram_feature_extracted_dataset_augmented"
+    # Convert lists to tensors and save
+    merged_features_tensor = torch.stack(merged_features)
+    merged_labels_tensor = torch.tensor(merged_labels)
+    torch.save((merged_features_tensor, merged_labels_tensor), save_path)
 
-directories_to_create = [
-    save_directory_mfcc, augment_save_directory_mfcc, 
-    save_directory_spectrogram, augment_save_directory_spectrogram
-]
+# Example usage:
 
-# Create directories if they don't exist
-for directory in directories_to_create:
-    create_directory_if_not_exists(directory)
-# Define the feature extraction functions
-def extract_mfccs(waveform, sample_rate):
-    return feature_extractor.extract_mfccs(waveform, sample_rate)
+# MFCC datasets from different sources
+mfcc_datasets = [crema_dataset_train, ravdess_dataset_train, tess_dataset_train, savee_dataset_train, emo_db_dataset_train, emovo_dataset_train]
+merge_and_save_datasets(mfcc_datasets, r'E:\speech_datasets\FP_EmoSpeak_MFCCs_Train.pt')
 
-def extract_spectrogram(waveform, sample_rate):
-    return feature_extractor.extract_spectrogram(waveform, sample_rate)
+# Spectrogram datasets from different sources
+spectrogram_datasets = [crema_dataset_train_spectrogram, ravdess_dataset_train_spectrogram, tess_dataset_train_spectrogram, savee_dataset_train_spectrogram, emo_db_dataset_train_spectrogram, emovo_dataset_train_spectrogram]
+merge_and_save_datasets(spectrogram_datasets, r'E:\speech_datasets\FP_EmoSpeak_Spectrograms_Train.pt')
 
+# Repeat for validation and test datasets
+# For Validation
+merge_and_save_datasets([crema_dataset_val, ravdess_dataset_val, tess_dataset_val, savee_dataset_val, emo_db_dataset_val, emovo_dataset_val], r'E:\speech_datasets\FP_EmoSpeak_MFCCs_Val.pt')
+merge_and_save_datasets([crema_dataset_val_spectrogram, ravdess_dataset_val_spectrogram, tess_dataset_val_spectrogram, savee_dataset_val_spectrogram, emo_db_dataset_val_spectrogram, emovo_dataset_val_spectrogram], r'E:\speech_datasets\FP_EmoSpeak_Spectrograms_Val.pt')
 
-
-# Process and save each dataset for MFCCs and Spectrograms
-for dataset_path, mapping in [(crema_directory_path, crema_mapping), (ravdess_directory_path, ravdess_mapping), (tess_directory_path, tess_mapping), (savee_directory_path, savee_mapping), (emo_db_directory_path, emo_db_mapping), (emovo_directory_path, emovo_mapping)]:
-    # Process for MFCCs
-    mfcc_data = process_dataset(dataset_path, mapping, unified_mapping, save_directory_mfcc, augment_save_directory_mfcc, 4, extract_mfccs)
-    
-    # Process for Spectrograms
-    spectrogram_data = process_dataset(dataset_path, mapping, unified_mapping, save_directory_spectrogram, augment_save_directory_spectrogram, 4, extract_spectrogram)
-
-    # Save MFCC data
-    mfccs, mfcc_labels = process_datasets_for_features(mfcc_data, extract_mfccs)
-    save_features_and_labels(mfccs, mfcc_labels, 'mfcc', save_directory_mfcc)
-
-    # Save Spectrogram data
-    spectrograms, spectrogram_labels = process_datasets_for_features(spectrogram_data, extract_spectrogram)
-
+# For Test
+merge_and_save_datasets([crema_dataset_test, ravdess_dataset_test, tess_dataset_test, savee_dataset_test, emo_db_dataset_test, emovo_dataset_test], r'E:\speech_datasets\FP_EmoSpeak_MFCCs_Test.pt')
+merge_and_save_datasets([crema_dataset_test_spectrogram, ravdess_dataset_test_spectrogram, tess_dataset_test_spectrogram, savee_dataset_test_spectrogram, emo_db_dataset_test_spectrogram, emovo_dataset_test_spectrogram], r'E:\speech_datasets\FP_EmoSpeak_Spectrograms_Test.pt')
