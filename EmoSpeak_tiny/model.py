@@ -3,76 +3,59 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class CustomTransformerClassifier(nn.Module):
-    def __init__(self, mfcc_dim, spectrogram_dim, num_classes, num_heads=8, num_layers=2, dim_feedforward=1024, dropout=0.1):
+    def __init__(self, target_channels, num_classes, num_heads=8, num_layers=2, dim_feedforward=1024, dropout=0.1):
         super().__init__()
-        combined_input_dim = mfcc_dim + spectrogram_dim
 
-        # Adjusted convolutional layers
-        self.conv1 = nn.Conv1d(in_channels=combined_input_dim, out_channels=256, kernel_size=3, padding=1)
+        # Convolutional layers for MFCC features
+        self.conv1 = nn.Conv1d(in_channels=target_channels, out_channels=256, kernel_size=3, padding=1)
         self.conv2 = nn.Conv1d(in_channels=256, out_channels=512, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv1d(in_channels=512, out_channels=128, kernel_size=3, padding=1)
         self.pool = nn.MaxPool1d(2, 2)
 
-        # Adjust Transformer Encoder Layers (reduced d_model to manage parameter count)
-        transformer_layer1 = nn.TransformerEncoderLayer(d_model=128, nhead=num_heads, dim_feedforward=dim_feedforward, dropout=dropout)  # Reduced d_model
-        transformer_layer2 = nn.TransformerEncoderLayer(d_model=128, nhead=num_heads, dim_feedforward=dim_feedforward, dropout=dropout)  # Reduced d_model
+        # Transformer Encoder Layers
+        transformer_layer = nn.TransformerEncoderLayer(d_model=512, nhead=num_heads, dim_feedforward=dim_feedforward, dropout=dropout)
+        self.transformer_encoder = nn.TransformerEncoder(transformer_layer, num_layers)
 
-        self.transformer_encoder1 = nn.TransformerEncoder(transformer_layer1, num_layers=12)
-        self.transformer_encoder2 = nn.TransformerEncoder(transformer_layer2, num_layers=6)
-
-        # Additional layers adjusted for compatibility
-        self.layer_norm = nn.LayerNorm(128)  # Adjusted for new d_model
-        self.fc1 = nn.Linear(128, 128)  # Adjusted
+        # Additional layers
+        self.layer_norm = nn.LayerNorm(512)
+        self.fc1 = nn.Linear(512, 128)
         self.fc2 = nn.Linear(128, num_classes)
-        
         self.dropout = nn.Dropout(dropout)
 
-    # forward method remains the same...
+    def forward(self, x):
+            # Handle the extra dimension
+            if x.dim() == 4:
+                # If the second dimension is 1 or 2, remove or merge it
+                if x.size(1) in [1, 2]:
+                    x = x.mean(dim=1)  # Averaging across the second dimension
+            else:
+                raise ValueError(f"Unexpected input shape: {x.shape}")
 
+            # Check if the tensor is 3D after processing
+            if x.dim() != 3:
+                raise ValueError(f"Input tensor should be 3D after processing, got shape: {x.shape}")
 
-    def forward(self, x_mfcc, x_spectrogram):
-        x_combined = torch.cat((x_mfcc, x_spectrogram), dim=1)
+            x = F.relu(self.conv1(x))
+            x = self.pool(F.relu(self.conv2(x)))
 
-        if x_combined.dim() == 4:
-            x_combined = x_combined.squeeze(1)
+            x = x.permute(2, 0, 1)  # Adjust as needed for your model
+            x = self.transformer_encoder(x)
+            output = x[-1]
 
-        x = x_combined.permute(0, 2, 1)  # Permute to [batch, seq_len, channels]
+            output = self.layer_norm(output)
+            output = self.dropout(output)
+            output = F.relu(self.fc1(output))
+            output = self.fc2(output)
 
-        # Convolutional layers with activation and pooling
-        x = F.relu(self.conv1(x))
-        x = self.pool(x)
-        x = F.relu(self.conv2(x))
-        x = self.pool(x)
-        x = F.relu(self.conv3(x))
-        x = self.pool(x)
+            return output
 
-        x = x.permute(2, 0, 1)  # Permute to [seq_len, batch, channels]
-
-        # Transformer Encoder
-        x = self.transformer_encoder1(x)
-        x = self.transformer_encoder2(x)
-
-        # Using output of the last token
-        output = x[-1]
-
-        # Apply layer normalization and dropout
-        output = self.layer_norm(output)
-        output = self.dropout(output)
-
-        # Fully connected layers for classification
-        output = F.relu(self.fc1(output))
-        output = self.fc2(output)
-
-        return output
 
 
 
 
 mfcc_dim = 200  # Example dimension for MFCC features
-spectrogram_dim = 201  # Example dimension for spectrogram features
-num_classes = 6  # Example number of classes
+num_classes = 8  # Example number of classes
 
-model = CustomTransformerClassifier(mfcc_dim, spectrogram_dim, num_classes)
+model = CustomTransformerClassifier(mfcc_dim, num_classes)
 
 # Function to calculate the number of trainable parameters in the model
 def count_trainable_parameters(model):

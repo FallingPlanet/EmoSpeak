@@ -13,23 +13,32 @@ class SERDataset(Dataset):
         self.num_augmentations = num_augmentations
         self.feature_extraction_function = getattr(feature_extractor, feature_extraction_func_name)
         self.data = self.load_data()
+        self.max_length = 0  # Initialize max_length
 
     def load_data(self):
         data = []
-        for root, dirs, files in os.walk(self.directory):
+        max_length = 0
+
+        for root, _, files in os.walk(self.directory):
             for filename in files:
                 if filename.lower().endswith('.wav'):
+                    full_path = os.path.join(root, filename)
+                    waveform, sample_rate = torchaudio.load(full_path)
+                    feature = self.feature_extraction_function(waveform, sample_rate)
+
+                    max_length = max(max_length, feature.shape[-1])
+
                     label = self.extract_label_from_filename(root, filename)
                     if label != -1:
-                        full_path = os.path.join(root, filename)
-                        waveform, sample_rate = torchaudio.load(full_path)
-                        feature = self.feature_extraction_function(waveform, sample_rate)
                         data.append((feature, label))
+
                         if self.is_train:
                             for _ in range(self.num_augmentations):
                                 augmented_waveform = feature_extractor.apply_augmentations(waveform, sample_rate)
                                 augmented_feature = self.feature_extraction_function(augmented_waveform, sample_rate)
                                 data.append((augmented_feature, label))
+
+        self.max_length = max_length
         return data
 
     def extract_label_from_filename(self, root, filename):
@@ -64,57 +73,22 @@ class SERDataset(Dataset):
     def __getitem__(self, idx):
         return self.data[idx]
     
-    def pad_sequence(sequences, batch_first=False, padding_value=0.0):
-        # Find the longest sequence
-        max_len = max([s.size(-1) for s in sequences])
-
-        # Pad all sequences to the max length
-        padded_sequences = []
-        for s in sequences:
-            if s.size(-1) < max_len:
-                # Amount to pad
-                padding_size = (0, 0, 0, max_len - s.size(-1))  # Padding the last dimension
-                padded_s = torch.nn.functional.pad(s, padding_size, 'constant', padding_value)
-                padded_sequences.append(padded_s)
-            else:
-                padded_sequences.append(s)
-
-        return torch.stack(padded_sequences, dim=0 if batch_first else 1)
-
-    def merge_and_save_datasets(datasets, save_path):
-        merged_features = []
-        merged_labels = []
-
-        # Find the maximum length in the dataset
-        max_len = max([feature.shape[-1] for dataset in datasets for feature, _ in dataset])
-
-        for dataset in datasets:
-            for feature, label in dataset:
-                # Ensure the feature tensor is in the correct shape [1, Freq, Time]
-                feature = feature.unsqueeze(0) if feature.dim() == 2 else feature
-
-                # Debug: Print dataset name and feature shape before padding
-                print(f"Dataset: {dataset.directory}, Before padding: {feature.shape}")
-
-                # Pad the feature tensor
-                if feature.size(-1) < max_len:
-                    padding_size = (0, max_len - feature.size(-1))  # Pad the last dimension
-                    feature = torch.nn.functional.pad(feature, padding_size, "constant", 0)
-
-                # Debug: Print feature shape after padding
-                print(f"After padding: {feature.shape}")
-
-                merged_features.append(feature)
-                merged_labels.append(label)
-
-        # Stack and save the tensors
-        merged_features_tensor = torch.stack(merged_features)
-        merged_labels_tensor = torch.tensor(merged_labels)
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        torch.save((merged_features_tensor, merged_labels_tensor), save_path)
 
 
-          
+def merge_and_save_datasets(datasets, save_path):
+    merged_features = []
+    merged_labels = []
+
+    for dataset in datasets:
+        for feature, label in dataset:
+            merged_features.append(feature)
+            merged_labels.append(label)
+
+    # Save the combined dataset as a list of tensors
+    data_dict = {'features': merged_features, 'labels': merged_labels}
+    torch.save(data_dict, save_path)
+
+
 
 
 unified_mapping = {
@@ -531,20 +505,7 @@ emovo_dataset_test_spectrogram = SERDataset(
 )
 
 
-def merge_and_save_datasets(datasets, save_path):
-    merged_features = []
-    merged_labels = []
 
-    for dataset in datasets:
-        for data in dataset:
-            feature, label = data
-            merged_features.append(feature)
-            merged_labels.append(label)
-
-    # Convert lists to tensors and save
-    merged_features_tensor = torch.stack(merged_features)
-    merged_labels_tensor = torch.tensor(merged_labels)
-    torch.save((merged_features_tensor, merged_labels_tensor), save_path)
 
 # Example usage:
 

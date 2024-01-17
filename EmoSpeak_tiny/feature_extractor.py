@@ -12,7 +12,7 @@ import soundfile as sf
 
 
 
-def extract_mfccs(waveform, sample_rate, n_mfcc=40, win_length=400, hop_length=160, n_mels=64, n_fft=800):
+def extract_mfccs(waveform, sample_rate, n_mfcc=30, win_length=400, hop_length=160, n_mels=30, n_fft=1024):
     mfcc_transform = torchaudio.transforms.MFCC(
         sample_rate=sample_rate,
         n_mfcc=n_mfcc,
@@ -24,9 +24,14 @@ def extract_mfccs(waveform, sample_rate, n_mfcc=40, win_length=400, hop_length=1
         }
     )
     mfcc = mfcc_transform(waveform)
-    return mfcc
+    return ensure_3d_tensor(mfcc)
 
-def extract_spectrogram(waveform, sample_rate, n_mels=64, win_length=400, hop_length=160, n_fft=800):
+def ensure_3d_tensor(tensor):
+    if tensor.dim() == 2:  # [features, time]
+        tensor = tensor.unsqueeze(0)  # Add channel dimension: [1, features, time]
+    return tensor
+
+def extract_spectrogram(waveform, sample_rate, n_mels=30, win_length=400, hop_length=160, n_fft=1024):
     spectrogram_transform = torchaudio.transforms.MelSpectrogram(
         sample_rate=sample_rate,
         n_mels=n_mels,
@@ -35,7 +40,7 @@ def extract_spectrogram(waveform, sample_rate, n_mels=64, win_length=400, hop_le
         n_fft=n_fft
     )
     spectrogram = spectrogram_transform(waveform)
-    return spectrogram
+    return ensure_3d_tensor(spectrogram)
 
 
 
@@ -61,21 +66,6 @@ def apply_augmentations(waveform, sample_rate):
 
     return waveform_volume_adjusted
 
-# Function to process all audio files within a directory and save augmented samples
-def process_and_augment_directory(directory, save_directory, augmented_directory, num_augmentations_per_file=3):
-    for filename in os.listdir(directory):
-        if filename.lower().endswith('.wav'):
-            full_path = os.path.join(directory, filename)
-            waveform, sample_rate = torchaudio.load(full_path)
-
-            # Save original sample
-            original_save_path = os.path.join(save_directory, filename)
-            save_waveform(waveform, sample_rate, original_save_path)
-
-            # Generate and save augmented samples
-            for i in range(num_augmentations_per_file):
-                augmented_waveform = apply_augmentations(waveform, sample_rate)
-                augmented_filename = f"{os.path.splitext(filename)[0]}_augmented_{i}.wav"
 
 
 
