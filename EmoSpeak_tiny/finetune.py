@@ -222,7 +222,7 @@ classifier = Classifier(
 optimizer = torch.optim.AdamW(model.parameters(), lr=1e-5, weight_decay=1e-8)
 
 # Training loop
-num_epochs = 20
+num_epochs = 25
 for epoch in range(num_epochs):
     classifier.train_step(train_loader, optimizer, epoch)
     classifier.val_test_step(val_loader, "Validation")
@@ -241,7 +241,13 @@ print(f"F1 Score: {test_results['f1']:.4f}")
 print(f"Matthews Correlation Coefficient: {test_results['mcc']:.4f}")
 print(f"Top 2 Accuracy: {test_results['top 2 accuracy']:.4f}")
 
-# Save the model state dictionary
-model_save_path = r"E:\model_saves\EmoSpeak_Transformer_Epoch_20.pt"  # Adjust the path and filename as needed
+model_save_path = r"E:\model_saves\EmoSpeak_Transformer_Tiny.pt"  # Adjust the path and filename as needed
+
+# Check if the directory exists, if not, create it
+model_save_dir = os.path.dirname(model_save_path)
+if not os.path.exists(model_save_dir):
+    os.makedirs(model_save_dir)
+
+# Save the model
 torch.save(model.state_dict(), model_save_path)
 print(f"Model saved to {model_save_path}")
